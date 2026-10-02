@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"name": "paper3_stata_vscode",
+			"path": "../../../Paper 3_new2/do-file/paper3_stata_vscode"
+		},
+		{
+			"name": "paper2_stata_vscode",
+			"path": "."
+		},
+		{
+			"name": "paper1_stata_vscode",
+			"path": "../../../paper 1/do-file/paper1_stata_vscode"
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,10 @@
+# Data and generated outputs should not be committed.
+data/*.dta
+output/data/
+output/tables/
+output/figures/
+output/models/
+output/logs/
+*.smcl
+*.stswp
+.DS_Store

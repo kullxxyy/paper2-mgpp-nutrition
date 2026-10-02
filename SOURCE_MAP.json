@@ -1,0 +1,266 @@
+{
+  "source": "archive/paper2_master_original.do",
+  "source_sha256": "0185feaf8dd2f0367e3e166a881125012e041ad437070489fbc01d88a9c99a31",
+  "modules": [
+    {
+      "file": "prep/00_checks.do",
+      "source_line_ranges": [],
+      "tables": []
+    },
+    {
+      "file": "prep/01_data_prep.do",
+      "source_line_ranges": [
+        [
+          13,
+          85
+        ],
+        [
+          93,
+          140
+        ],
+        [
+          238,
+          249
+        ],
+        [
+          428,
+          431
+        ],
+        [
+          486,
+          487
+        ]
+      ],
+      "tables": []
+    },
+    {
+      "file": "prep/05_baseline_groups.do",
+      "source_line_ranges": [
+        [
+          354,
+          366
+        ],
+        [
+          444,
+          452
+        ],
+        [
+          548,
+          577
+        ],
+        [
+          589,
+          596
+        ],
+        [
+          623,
+          629
+        ],
+        [
+          794,
+          797
+        ],
+        [
+          940,
+          968
+        ],
+        [
+          989,
+          993
+        ]
+      ],
+      "tables": []
+    },
+    {
+      "file": "analyses/02_nutrition_main.do",
+      "source_line_ranges": [
+        [
+          251,
+          341
+        ]
+      ],
+      "tables": [
+        "02_nutrition_main_table_01.rtf",
+        "02_nutrition_main_table_01.csv",
+        "02_nutrition_main_table_02.rtf",
+        "02_nutrition_main_table_02.csv"
+      ]
+    },
+    {
+      "file": "analyses/03_kcal_heterogeneity.do",
+      "source_line_ranges": [
+        [
+          372,
+          411
+        ]
+      ],
+      "tables": [
+        "03_kcal_heterogeneity_table_01.rtf",
+        "03_kcal_heterogeneity_table_01.csv",
+        "03_kcal_heterogeneity_table_02.rtf",
+        "03_kcal_heterogeneity_table_02.csv"
+      ]
+    },
+    {
+      "file": "analyses/04_income_ddd.do",
+      "source_line_ranges": [
+        [
+          631,
+          718
+        ]
+      ],
+      "tables": [
+        "04_income_ddd_table_01.rtf",
+        "04_income_ddd_table_01.csv",
+        "04_income_ddd_table_02.rtf",
+        "04_income_ddd_table_02.csv",
+        "04_income_ddd_table_03.rtf",
+        "04_income_ddd_table_03.csv"
+      ]
+    },
+    {
+      "file": "analyses/06_channels.do",
+      "source_line_ranges": [
+        [
+          417,
+          443
+        ],
+        [
+          486,
+          543
+        ],
+        [
+          722,
+          790
+        ],
+        [
+          846,
+          873
+        ],
+        [
+          906,
+          915
+        ]
+      ],
+      "tables": []
+    },
+    {
+      "file": "analyses/07_robustness.do",
+      "source_line_ranges": [
+        [
+          552,
+          555
+        ],
+        [
+          579,
+          585
+        ],
+        [
+          598,
+          609
+        ],
+        [
+          799,
+          839
+        ],
+        [
+          877,
+          902
+        ],
+        [
+          917,
+          937
+        ],
+        [
+          971,
+          986
+        ],
+        [
+          995,
+          1063
+        ]
+      ],
+      "tables": [
+        "07_robustness_table_01.rtf",
+        "07_robustness_table_01.csv",
+        "07_robustness_table_02.rtf",
+        "07_robustness_table_02.csv",
+        "07_robustness_table_03.rtf",
+        "07_robustness_table_03.csv",
+        "07_robustness_table_04.rtf",
+        "07_robustness_table_04.csv",
+        "07_robustness_table_05.rtf",
+        "07_robustness_table_05.csv",
+        "07_robustness_table_06.rtf",
+        "07_robustness_table_06.csv",
+        "07_robustness_table_07.rtf",
+        "07_robustness_table_07.csv",
+        "07_robustness_table_08.rtf",
+        "07_robustness_table_08.csv"
+      ]
+    },
+    {
+      "file": "analyses/08_business_channel.do",
+      "source_line_ranges": [
+        [
+          1139,
+          1208
+        ]
+      ],
+      "tables": [
+        "08_business_channel_table_01.rtf",
+        "08_business_channel_table_01.csv"
+      ]
+    },
+    {
+      "file": "analyses/09_nutrition_shares.do",
+      "source_line_ranges": [
+        [
+          454,
+          485
+        ],
+        [
+          1094,
+          1123
+        ]
+      ],
+      "tables": [
+        "09_nutrition_shares_table_01.rtf",
+        "09_nutrition_shares_table_01.csv",
+        "09_nutrition_shares_table_02.rtf",
+        "09_nutrition_shares_table_02.csv"
+      ]
+    },
+    {
+      "file": "analyses/10_eventdd_shares.do",
+      "source_line_ranges": [
+        [
+          1067,
+          1090
+        ]
+      ],
+      "tables": []
+    },
+    {
+      "file": "output/11_descriptive.do",
+      "source_line_ranges": [
+        [
+          146,
+          234
+        ]
+      ],
+      "tables": []
+    },
+    {
+      "file": "output/12_tables_diagnostics.do",
+      "source_line_ranges": [],
+      "tables": []
+    }
+  ],
+  "validation": {
+    "static_checks": "passed",
+    "regression_command_blocks_preserved": 89,
+    "stata_execution": "not run; Stata and paper2_data.dta unavailable",
+    "entrypoint_revision": "Configured project folder, early validation and preparation guards; static checks passed; Stata runtime untested."
+  }
+}

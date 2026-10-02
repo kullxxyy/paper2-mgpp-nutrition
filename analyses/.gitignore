@@ -1,0 +1,20 @@
+# Data
+data/
+*.dta
+
+# Output
+output/
+*.log
+*.ster
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+
+# Python
+.venv/
+__pycache__/
+*.pyc
