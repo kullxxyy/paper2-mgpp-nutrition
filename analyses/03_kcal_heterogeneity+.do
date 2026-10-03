@@ -49,10 +49,9 @@ foreach v in ///
 
 foreach y of local outcomes {
 
-    capture drop ///
-        pb_has97_`y' ///
-        pb_has00_`y' ///
-        prebal2_`y'
+    capture drop pb_has97_`y'
+    capture drop pb_has00_`y'
+    capture drop prebal2_`y'
 
 
     * 1997 outcome observed
@@ -91,9 +90,8 @@ foreach y of local outcomes {
 
 foreach y of local outcomes {
 
-    capture drop ///
-        qkcal_prebal_`y' ///
-        lowS_prebal_q25_`y'
+    capture drop qkcal_prebal_`y'
+    capture drop lowS_prebal_q25_`y'
 
 
     preserve
@@ -408,14 +406,13 @@ esttab ///
 
 foreach y of local outcomes {
 
-    capture drop ///
-        sw97_`y' ///
-        sw00_`y' ///
-        sw04_`y' ///
-        sw06_`y' ///
-        sw09_`y' ///
-        sw11_`y' ///
-        balanced6_`y'
+    capture drop sw97_`y'
+    capture drop sw00_`y'
+    capture drop sw04_`y'
+    capture drop sw06_`y'
+    capture drop sw09_`y'
+    capture drop sw11_`y'
+    capture drop balanced6_`y'
 
 
     bysort IDind: egen sw97_`y' = max( ///
@@ -486,9 +483,8 @@ foreach y of local outcomes {
 
 foreach y of local outcomes {
 
-    capture drop ///
-        qkcal_bal6_`y' ///
-        lowS_bal6_q25_`y'
+    capture drop qkcal_bal6_`y'
+    capture drop lowS_bal6_q25_`y'
 
 
     preserve
