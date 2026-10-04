@@ -1,26 +1,79 @@
 *===============================================================================
-* PAPER 2 — SAMPLE, OUTCOMES AND EVENT VARIABLES
+* PAPER 2 — SAMPLE, OUTCOMES, AND EVENT VARIABLES
 * File: prep/01_data_prep.do
-* Run through main.do, or load output/data/paper2_analysis_ready.dta first.
-* Locals used below belong to this file; no cross-file local macros are required.
+*
+* PURPOSE
+*   Prepare Paper 2 analysis variables from the ORIGINAL input data.
+*
+* IMPORTANT
+*   1. Run this file through main.do.
+*   2. prep/00_checks.do should load and validate the original input data first.
+*   3. Do NOT run this file on an already-prepared analysis-ready dataset.
+*   4. This file creates sample flags; it does NOT drop non-consumer households.
+*
+* PURE-CONSUMER STRATEGY
+*   The agricultural variables in CHNS are useful for detecting agricultural
+*   production, but their zeros are extremely sparse and missing values are
+*   common. Therefore, they are treated as POSITIVE EVIDENCE of production,
+*   not as a complete producer/non-producer classification system.
+*
+*   Three nested baseline definitions are created:
+*
+*   A. consumer_base_occ
+*      No observed farmer occupation before the policy.
+*
+*   B. consumer_base   [MAIN]
+*      No observed farmer occupation before the policy
+*      AND no observed CORE production evidence before the policy.
+*
+*      Core evidence:
+*        farmsize > 0
+*        HHFARM != 0     (negative farm income still implies farm activity)
+*        farmconsume > 0
+*        farmexp > 0
+*
+*   C. consumer_base_strict   [ROBUSTNESS]
+*      Main definition
+*      AND no observed broader agricultural evidence from
+*        HHFISH, hhgard, HHLVST.
+*
+* IMPORTANT INTERPRETATION
+*   consumer_base and consumer_base_strict are empirical pure-consumer PROXIES.
+*   Missing production-module values are NOT automatically coded as zero.
+*   Instead, households are excluded when positive production evidence exists.
+*
+* TIMING ASSUMPTION
+*   The agricultural variables below are treated as lagged measures:
+*   survey-wave t values refer to agricultural activity in t-1.
+*   This assumption should be checked variable-by-variable against the CHNS
+*   questionnaire/codebook.
+*===============================================================================
+display as error "RUNNING CURRENT 01_data_prep.do"
+
+*===============================================================================
+* 0. PRE-RUN CHECKS
 *===============================================================================
 
-* This module requires main.do's input checks and the Paper 2 input data.
 if "$P2_DATA_FILE" == "" {
-    display as error "Paper 2 configuration is not initialized. Run the entire main.do first."
+    display as error ///
+        "Paper 2 configuration is not initialized. Run main.do first."
     exit 198
 }
+
 capture confirm numeric variable job
 if _rc {
     display as error "The active dataset has no numeric job variable."
-    display as text "Run main.do so prep/00_checks.do loads and checks Paper 2 data."
+    display as text ///
+        "Run main.do so prep/00_checks.do loads and checks the original data."
     exit 111
 }
 
+
 *===============================================================================
-* Harmonized community ID for clustering
+* 1. HARMONIZED COMMUNITY ID FOR CLUSTERING
 *===============================================================================
 
+capture drop cluster_commid
 gen cluster_commid = COMMID
 
 capture confirm variable commid
@@ -32,318 +85,803 @@ if !_rc {
 label variable cluster_commid "Community ID used for clustering"
 
 quietly count if missing(cluster_commid)
-display as text "Observations with missing cluster_commid: " r(N)
+display as text ///
+    "Observations with missing cluster_commid: " r(N)
+
 
 *===============================================================================
-* %% PART 1A — ORIGINAL EXPENSE DIAGNOSTICS
-**# PART 1A — ORIGINAL EXPENSE DIAGNOSTICS
+* 2. OPTIONAL ORIGINAL EXPENSE DIAGNOSTICS
 *===============================================================================
 
-* Optional original expense diagnostics (not needed by the estimators).
 capture confirm numeric variable H4 hhexpense
 if !_rc {
-gen year_busexp=H4*12
-gen diff=hhexpense-year_busexp
-sort diff
-*drop if diff==0 
-*list F10A HHBUS hhexpense E5 year_busexp diff H2 E5 G5 h1d G16
-gen have_exp=(hhexpense > 0)
-*keep if hhexpense == 0
-*drop if wave<2000 
 
-tab wave
-bysort t1: sum hhexpense
+    capture drop year_busexp diff have_exp
 
+    gen year_busexp = H4 * 12
+    gen diff = hhexpense - year_busexp
+
+    * Keep missing expenditure as missing.
+    gen have_exp = (hhexpense > 0) if !missing(hhexpense)
+
+    tab wave
+
+    capture confirm variable t1
+    if !_rc {
+        bysort t1: summarize hhexpense
+    }
 }
 
+
 *===============================================================================
-* %% PART 1B — BASELINE PURE-CONSUMER SAMPLE
-**# PART 1B — BASELINE PURE-CONSUMER SAMPLE
+* 3. BASELINE PURE-CONSUMER PROXIES
 *===============================================================================
 
-*-----------------------------*
-* 0) Define pre-policy timing
-*-----------------------------*
+*-------------------------------------------------------------------------------
+* 3.1 Policy timing
+*-------------------------------------------------------------------------------
+
 * Current-period variables:
-* 2004 is excluded because it is treated as the first policy-period wave.
+* 2004 is treated as the first policy-period wave.
 local pre_end_current = 2003
 
-* Lagged agricultural variables measured at wave t refer to t-1.
-* Therefore, the 2004 survey can still contain information on 2003 activity.
+* Lagged agricultural variables:
+* under the t-1 interpretation, the 2004 survey may contain 2003 activity.
 local pre_end_lagged = 2004
 
-*-----------------------------*
-* 1) Farmer occupation at baseline
-*-----------------------------*
-* Individual is a farmer if primary occupation == 5.
-* Keep missing job information as missing.
+
+*-------------------------------------------------------------------------------
+* 3.2 Farmer occupation: individual -> household-wave -> baseline household
+*-------------------------------------------------------------------------------
+
+capture drop farmer_ind farmer_hh_wave base_farmer
+
+* Individual is a farmer when primary occupation == 5.
 gen farmer_ind = (job == 5) if !missing(job)
 
-* Household has a farmer in a given wave if at least one observed member is a farmer.
-* If all household members' job information is missing, farmer_hh_wave remains missing.
-bys hhid wave: egen farmer_hh_wave = max(farmer_ind)
+* Household-wave status:
+*   1 = at least one observed member is a farmer
+*   0 = job information is observed and no observed member is a farmer
+*   . = all household members' job information is missing
+bysort hhid wave: egen farmer_hh_wave = max(farmer_ind)
 
-* Baseline farmer status.
-* 1 = farmer observed in at least one pre-policy wave
-* 0 = observed in pre-policy waves, but no farmer found
-* . = no usable pre-policy occupation information
-bys hhid: egen base_farmer = ///
+* Baseline household farmer status.
+bysort hhid: egen base_farmer = ///
     max(cond(wave <= `pre_end_current', farmer_hh_wave, .))
 
-*-----------------------------*
-* 2) Lagged producer evidence
-*-----------------------------*
+label variable base_farmer ///
+    "Baseline farmer occupation status"
+
+
+*-------------------------------------------------------------------------------
+* 3.3 Preserve and clean agricultural variables
+*-------------------------------------------------------------------------------
+
+capture drop ///
+    farmsize_raw HHFARM_raw farmconsume_raw farmexp_raw ///
+    HHFISH_raw hhgard_raw HHLVST_raw
+
+clonevar farmsize_raw    = farmsize
+clonevar HHFARM_raw      = HHFARM
+clonevar farmconsume_raw = farmconsume
+clonevar farmexp_raw     = farmexp
+clonevar HHFISH_raw      = HHFISH
+clonevar hhgard_raw      = hhgard
+clonevar HHLVST_raw      = HHLVST
+
 foreach v in farmsize HHFARM farmconsume farmexp HHFISH hhgard HHLVST {
+
+    capture confirm numeric variable `v'
+    if _rc {
+        display as error ///
+            "Required agricultural variable `v' is missing or non-numeric."
+        exit 111
+    }
+
+    * Known CHNS special missing values.
     replace `v' = . if inlist(`v', -9, -99, -999, -9999)
 }
 
-* Each variable equals:
-* 1 = positive agricultural activity
-* 0 = observed but no positive activity
-* . = information missing
 
-gen prod_land_l1 = (farmsize    > 0) if !missing(farmsize)
-gen prod_inc_l1  = (HHFARM     > 0) if !missing(HHFARM)
-gen prod_self_l1 = (farmconsume > 0) if !missing(farmconsume)
-gen prod_exp_l1  = (farmexp     > 0) if !missing(farmexp)
-gen prod_indf_l1 = (HHFISH      > 0) if !missing(HHFISH)
-gen prod_indg_l1 = (hhgard      > 0) if !missing(hhgard)
-gen prod_indl_l1 = (HHLVST      > 0) if !missing(HHLVST)
+*-------------------------------------------------------------------------------
+* 3.4 Row-level POSITIVE production-evidence indicators
+*-------------------------------------------------------------------------------
 
-* Number of available agricultural indicators.
-egen prod_info_n = rownonmiss( ///
-    farmsize HHFARM farmconsume farmexp HHFISH hhgard HHLVST)
+capture drop ///
+    ev_land_l1 ev_farminc_l1 ev_self_l1 ev_farmexp_l1 ///
+    ev_fish_l1 ev_garden_l1 ev_livestock_l1
 
-* Household-wave producer indicator.
-* rowmax() returns:
-* 1 if any observed indicator shows agricultural activity,
-* 0 if indicators are observed but none shows activity,
-* . if all indicators are missing.
-egen producer_l1 = rowmax( ///
-    prod_land_l1 prod_inc_l1 prod_self_l1 prod_exp_l1 ///
-    prod_indf_l1 prod_indg_l1 prod_indl_l1)
+* Core evidence.
+gen ev_land_l1 = (farmsize > 0) ///
+    if !missing(farmsize)
 
-label define prod ///
-    0 "No observed ag activity" ///
-    1 "Observed ag activity", replace
+* IMPORTANT:
+* Farm income can be negative because a farming household can make a loss.
+* Any nonzero observed HHFARM therefore provides evidence of farm activity.
+gen ev_farminc_l1 = (HHFARM != 0) ///
+    if !missing(HHFARM)
 
-label values producer_l1 prod
+gen ev_self_l1 = (farmconsume > 0) ///
+    if !missing(farmconsume)
 
-* Baseline producer status.
-* Because these variables refer to t-1,
-* the 2004 wave is allowed to provide information on 2003 production.
-bys hhid: egen base_producer = ///
-    max(cond(wave <= `pre_end_lagged', producer_l1, .))
+gen ev_farmexp_l1 = (farmexp > 0) ///
+    if !missing(farmexp)
 
-*-----------------------------*
-* 3) Define baseline pure consumer
-*-----------------------------*
+* Broader agricultural evidence used only for the strict definition.
+gen ev_fish_l1 = (HHFISH > 0) ///
+    if !missing(HHFISH)
 
-* Conservative classification:
-* 1 only when both baseline farmer and producer status are clearly zero.
-* 0 whenever there is positive farming/production evidence.
-* Missing remains missing when baseline information is insufficient.
+gen ev_garden_l1 = (hhgard > 0) ///
+    if !missing(hhgard)
 
+gen ev_livestock_l1 = (HHLVST > 0) ///
+    if !missing(HHLVST)
+
+
+*-------------------------------------------------------------------------------
+* 3.5 Aggregate evidence to household-wave level
+*-------------------------------------------------------------------------------
+
+capture drop ///
+    ev_land_hh ev_farminc_hh ev_self_hh ev_farmexp_hh ///
+    ev_fish_hh ev_garden_hh ev_livestock_hh
+
+bysort hhid wave: egen ev_land_hh      = max(ev_land_l1)
+bysort hhid wave: egen ev_farminc_hh   = max(ev_farminc_l1)
+bysort hhid wave: egen ev_self_hh      = max(ev_self_l1)
+bysort hhid wave: egen ev_farmexp_hh   = max(ev_farmexp_l1)
+
+bysort hhid wave: egen ev_fish_hh      = max(ev_fish_l1)
+bysort hhid wave: egen ev_garden_hh    = max(ev_garden_l1)
+bysort hhid wave: egen ev_livestock_hh = max(ev_livestock_l1)
+
+
+*-------------------------------------------------------------------------------
+* 3.6 Household-wave CORE production evidence
+*-------------------------------------------------------------------------------
+
+capture drop core_prod_info_n producer_core_hh_wave
+
+* Number of core indicators observed in this household-wave.
+egen core_prod_info_n = rownonmiss( ///
+    ev_land_hh ev_farminc_hh ev_self_hh ev_farmexp_hh)
+
+* Evidence status:
+*   1 = at least one core source indicates production
+*   0 = at least one core source is observed and all observed sources are zero
+*   . = all core sources are missing
+egen producer_core_hh_wave = rowmax( ///
+    ev_land_hh ev_farminc_hh ev_self_hh ev_farmexp_hh)
+
+label variable producer_core_hh_wave ///
+    "Core agricultural-production evidence, household-wave"
+
+
+*-------------------------------------------------------------------------------
+* 3.7 Household-wave STRICT/BROAD production evidence
+*-------------------------------------------------------------------------------
+
+capture drop strict_prod_info_n producer_strict_hh_wave
+
+egen strict_prod_info_n = rownonmiss( ///
+    ev_land_hh ev_farminc_hh ev_self_hh ev_farmexp_hh ///
+    ev_fish_hh ev_garden_hh ev_livestock_hh)
+
+egen producer_strict_hh_wave = rowmax( ///
+    ev_land_hh ev_farminc_hh ev_self_hh ev_farmexp_hh ///
+    ev_fish_hh ev_garden_hh ev_livestock_hh)
+
+label variable producer_strict_hh_wave ///
+    "Broad agricultural-production evidence, household-wave"
+
+
+*-------------------------------------------------------------------------------
+* 3.8 Baseline production evidence
+*-------------------------------------------------------------------------------
+
+capture drop ///
+    base_producer base_producer_core base_producer_strict
+
+bysort hhid: egen base_producer_core = ///
+    max(cond(wave <= `pre_end_lagged', producer_core_hh_wave, .))
+
+bysort hhid: egen base_producer_strict = ///
+    max(cond(wave <= `pre_end_lagged', producer_strict_hh_wave, .))
+
+* Backward-compatible alias used by older analysis files.
+gen base_producer = base_producer_core
+
+label variable base_producer_core ///
+    "Baseline core production evidence"
+label variable base_producer_strict ///
+    "Baseline broad production evidence"
+label variable base_producer ///
+    "Baseline core production evidence (legacy alias)"
+
+
+*-------------------------------------------------------------------------------
+* 3.9 Baseline consumer definitions
+*-------------------------------------------------------------------------------
+
+capture drop ///
+    consumer_base_occ consumer_base consumer_base_strict
+
+* A. Occupation-only benchmark.
+gen consumer_base_occ = .
+
+replace consumer_base_occ = 1 ///
+    if base_farmer == 0
+
+replace consumer_base_occ = 0 ///
+    if base_farmer == 1
+
+label define cons_occ ///
+    0 "Baseline farmer household" ///
+    1 "Baseline non-farmer household", replace
+
+label values consumer_base_occ cons_occ
+
+
+* B. MAIN pure-consumer proxy.
+*
+* A household is included when:
+*   - baseline occupation data identify it as non-farmer, AND
+*   - there is NO POSITIVE core production evidence.
+*
+* Note:
+*   base_producer_core == . does NOT automatically mean "non-producer."
+*   It means no usable core production-module evidence.
+*   The household is retained because occupation data identify it as non-farmer,
+*   while any positive production evidence overrides that classification.
 gen consumer_base = .
 
 replace consumer_base = 1 ///
-    if base_farmer == 0 & base_producer == 0
+    if base_farmer == 0 ///
+    & (base_producer_core == 0 | missing(base_producer_core))
 
 replace consumer_base = 0 ///
-    if base_farmer == 1 | base_producer == 1
+    if base_farmer == 1 | base_producer_core == 1
 
-label define cons ///
-    0 "Not baseline pure consumer" ///
-    1 "Baseline pure consumer", replace
+label define cons_main ///
+    0 "Not baseline pure-consumer proxy" ///
+    1 "Baseline pure-consumer proxy: main/core", replace
 
-label values consumer_base cons
-
-
-*-----------------------------*
-* 4) Baseline diagnostics
-*-----------------------------*
-
-tab consumer_base, missing
-
-quietly count if missing(base_farmer)
-display as text ///
-    "Households/observations with unknown baseline farmer status: " r(N)
-
-quietly count if missing(base_producer)
-display as text ///
-    "Households/observations with unknown baseline producer status: " r(N)
-
-quietly count if missing(consumer_base)
-display as text ///
-    "Observations with insufficient baseline information: " r(N)
-
-tab prod_info_n wave, missing
-tab prod_info_n if wave<=2004, missing
+label values consumer_base cons_main
 
 
-* Household-wave agricultural information coverage
-bys hhid wave: egen hh_prod_info = max(prod_info_n)
+* C. STRICT robustness definition.
+*
+* Same occupation requirement as the main definition, but any positive
+* evidence from fishery, gardening, or livestock also excludes the household.
+gen consumer_base_strict = .
 
+replace consumer_base_strict = 1 ///
+    if base_farmer == 0 ///
+    & (base_producer_strict == 0 | missing(base_producer_strict))
+
+replace consumer_base_strict = 0 ///
+    if base_farmer == 1 | base_producer_strict == 1
+
+label define cons_strict ///
+    0 "Not baseline pure-consumer proxy" ///
+    1 "Baseline pure-consumer proxy: strict/broad", replace
+
+label values consumer_base_strict cons_strict
+
+* Logical check:
+* every strict pure-consumer household must also satisfy the main definition.
+assert consumer_base == 1 if consumer_base_strict == 1
+
+
+*-------------------------------------------------------------------------------
+* 3.10 Household-level diagnostics
+*-------------------------------------------------------------------------------
+
+capture drop tag_hh tag_hhw
+
+egen tag_hh  = tag(hhid)
 egen tag_hhw = tag(hhid wave)
 
-tab hh_prod_info wave if tag_hhw, missing
-tab hh_prod_info if tag_hhw & wave<=2004, missing
+display as text "------------------------------------------------------------"
+display as text "BASELINE SAMPLE DIAGNOSTICS"
+display as text "------------------------------------------------------------"
 
-* Maximum number of available producer indicators
-* observed in any pre-policy household-wave
-bys hhid: egen base_prod_info_max = ///
-    max(cond(wave <= 2004, hh_prod_info, .))
+tab base_farmer if tag_hh, missing
+tab base_producer_core if tag_hh, missing
+tab base_producer_strict if tag_hh, missing
 
-* Tag one observation per household
-egen tag_hh = tag(hhid)
+tab base_farmer base_producer_core if tag_hh, missing
 
-tab base_prod_info_max if tag_hh, missing
+tab consumer_base_occ if tag_hh, missing
+tab consumer_base if tag_hh, missing
+tab consumer_base_strict if tag_hh, missing
 
-egen tag_hhw2 = tag(hhid wave)
+quietly count if tag_hh & consumer_base_occ == 1
+display as text ///
+    "Occupation-only non-farmer households = " r(N)
 
-gen pre_prodinfo_wave = ///
-    (wave <= 2004 & hh_prod_info > 0) if tag_hhw2
+quietly count if tag_hh & consumer_base == 1
+display as text ///
+    "Main pure-consumer proxy households = " r(N)
 
-bys hhid: egen n_pre_prodinfo_waves = total(pre_prodinfo_wave)
+quietly count if tag_hh & consumer_base_strict == 1
+display as text ///
+    "Strict pure-consumer proxy households = " r(N)
 
-tab n_pre_prodinfo_waves if tag_hh, missing
-*-----------------------------*
-* 5) Keep fixed baseline pure-consumer sample
-*-----------------------------*
+* Treated/control composition of the main sample.
+tab treated if tag_hh & consumer_base == 1, missing
 
-keep if consumer_base == 1
+* Observation counts.
+quietly count if consumer_base == 1
+display as text ///
+    "Main pure-consumer proxy observations = " r(N)
 
-xtset IDind wave
-xtdescribe
+quietly count if consumer_base_strict == 1
+display as text ///
+    "Strict pure-consumer proxy observations = " r(N)
 
-*-----------------------------*
-* 6) Current consumer status
-*-----------------------------*
+display as text "------------------------------------------------------------"
 
-* Do not treat missing agricultural information as zero.
+
+*-------------------------------------------------------------------------------
+* 3.11 Information-coverage diagnostics
+*-------------------------------------------------------------------------------
+
+capture drop ///
+    base_core_info_max base_strict_info_max ///
+    pre_core_info_wave pre_strict_info_wave ///
+    n_pre_core_info_waves n_pre_strict_info_waves
+
+bysort hhid: egen base_core_info_max = ///
+    max(cond(wave <= `pre_end_lagged', core_prod_info_n, .))
+
+bysort hhid: egen base_strict_info_max = ///
+    max(cond(wave <= `pre_end_lagged', strict_prod_info_n, .))
+
+gen pre_core_info_wave = ///
+    (wave <= `pre_end_lagged' & core_prod_info_n > 0) if tag_hhw
+
+gen pre_strict_info_wave = ///
+    (wave <= `pre_end_lagged' & strict_prod_info_n > 0) if tag_hhw
+
+bysort hhid: egen n_pre_core_info_waves = ///
+    total(pre_core_info_wave)
+
+bysort hhid: egen n_pre_strict_info_waves = ///
+    total(pre_strict_info_wave)
+
+label variable n_pre_core_info_waves ///
+    "No. baseline waves with observed core production-module information"
+
+label variable n_pre_strict_info_waves ///
+    "No. baseline waves with observed broad production-module information"
+
+* Diagnostics only.
+* Do NOT automatically restrict the main sample by these variables because
+* production-module missingness may reflect questionnaire skip patterns.
+tab n_pre_core_info_waves if tag_hh, missing
+tab n_pre_strict_info_waves if tag_hh, missing
+
+
+*-------------------------------------------------------------------------------
+* 3.12 Current consumer proxies
+*-------------------------------------------------------------------------------
+
+capture drop consumer consumer_strict
+
+* Main current consumer proxy.
 gen consumer = .
 
 replace consumer = 1 ///
-    if producer_l1 == 0 & farmer_hh_wave == 0
+    if farmer_hh_wave == 0 ///
+    & (producer_core_hh_wave == 0 | missing(producer_core_hh_wave))
 
 replace consumer = 0 ///
-    if producer_l1 == 1 | farmer_hh_wave == 1
+    if farmer_hh_wave == 1 | producer_core_hh_wave == 1
+
+label variable consumer ///
+    "Current pure-consumer proxy: main/core"
 
 
-*-----------------------------*
-* 7) Post-policy entry into production
-*-----------------------------*
+* Strict current consumer proxy.
+gen consumer_strict = .
 
-* producer_l1 is measured at wave t but refers to t-1.
-* Therefore, 2006 is the first survey wave containing clearly post-policy
-* production information if policy exposure begins in 2004.
+replace consumer_strict = 1 ///
+    if farmer_hh_wave == 0 ///
+    & (producer_strict_hh_wave == 0 | missing(producer_strict_hh_wave))
 
-bys hhid: egen ever_farmer = ///
-    max(cond(wave >= 2006, producer_l1, .))
+replace consumer_strict = 0 ///
+    if farmer_hh_wave == 1 | producer_strict_hh_wave == 1
+
+label variable consumer_strict ///
+    "Current pure-consumer proxy: strict/broad"
+
+
+*-------------------------------------------------------------------------------
+* 3.13 Post-policy entry into production
+*-------------------------------------------------------------------------------
+
+capture drop ever_producer ever_producer_strict ever_farmer
+
+* Because production measures are treated as t-1,
+* 2006 is the first survey wave with clearly post-policy production evidence
+* if policy exposure begins in 2004.
+bysort hhid: egen ever_producer = ///
+    max(cond(wave >= 2006, producer_core_hh_wave, .))
+
+bysort hhid: egen ever_producer_strict = ///
+    max(cond(wave >= 2006, producer_strict_hh_wave, .))
+
+label variable ever_producer ///
+    "Ever post-policy core production evidence"
+
+label variable ever_producer_strict ///
+    "Ever post-policy broad production evidence"
+
+* Legacy alias so older downstream files continue to run.
+gen ever_farmer = ever_producer
 
 label variable ever_farmer ///
-    "Ever observed producer in post-policy lagged production data"
+    "Legacy alias of ever_producer"
 
-    
+
 *===============================================================================
-* %% PART 1C — WINSORIZATION
-**# PART 1C — WINSORIZATION
+* 4. WINSORIZATION
 *===============================================================================
 
-*** extreme values 
-* Keep original nutrition outcomes
+capture drop d3kcal_raw d3carbo_raw d3fat_raw d3protn_raw
+
+* Preserve un-winsorized outcomes.
 clonevar d3kcal_raw  = d3kcal
 clonevar d3carbo_raw = d3carbo
 clonevar d3fat_raw   = d3fat
 clonevar d3protn_raw = d3protn
 
-* Winsorize main outcomes
+* Main specification: common 1st/99th percentile winsorization.
 winsor2 d3kcal,  cuts(1 99) replace
 winsor2 d3carbo, cuts(1 99) replace
 winsor2 d3fat,   cuts(1 99) replace
 winsor2 d3protn, cuts(1 99) replace
 
-*===============================================================================
-* %% PART 1D — DEMOGRAPHICS AND LOG OUTCOMES
-**# PART 1D — DEMOGRAPHICS AND LOG OUTCOMES
-*===============================================================================
-
-gen child = age < 18 if !missing(age)
-bys hhid wave: egen n_child = total(child)
-
-gen elderly = age >= 65 if !missing(age)
-bys hhid wave: egen n_elderly = total(elderly)
-
-gen elderly_share = n_elderly / hhsize
-
-gen male = gender == 1 if !missing(gender)
-bys hhid wave: egen n_male = total(male)
-
-gen male_share = n_male / hhsize
-sum  n_child elderly_share male_share 
-
-***Summary statistics 
-***descriptive statistics about the  difference 
-***control vs treated ttest 
-
-gen lnd3kcal=ln(d3kcal)
-gen lnd3carbo=ln(d3carbo)
-gen lnd3fat=ln(d3fat)
-gen lnd3protn=ln(d3protn)
-
-gen lnhhexpense_real=ln(hhexpense_real+1)
-gen lnHHINC_real=ln(HHINC_real+1)
 
 *===============================================================================
-* %% PART 1E — WAGES AND CONSUMPTION
-**# PART 1E — WAGES AND CONSUMPTION
+* 5. DEMOGRAPHICS AND LOG OUTCOMES
 *===============================================================================
 
-* Keep the original C8 column; create the shared wage outcome if it exists.
-capture confirm variable C8
-if !_rc {
-    gen monthly_wage = C8
-    replace monthly_wage = . if inlist(monthly_wage, -9999, -999, -9)
-    gen ln_monthly_wage = ln(monthly_wage)
+capture drop ///
+    child elderly male ///
+    n_age_obs n_gender_obs ///
+    n_child n_elderly n_male ///
+    elderly_share male_share
+
+* Child and elderly indicators.
+gen child = (age < 18) if !missing(age)
+gen elderly = (age >= 65) if !missing(age)
+
+* Household-wave counts.
+bysort hhid wave: egen n_age_obs = count(age)
+bysort hhid wave: egen n_child   = total(child)
+bysort hhid wave: egen n_elderly = total(elderly)
+
+* egen total() returns 0 when all inputs are missing; restore missing.
+replace n_child   = . if n_age_obs == 0
+replace n_elderly = . if n_age_obs == 0
+
+* Gender.
+gen male = (gender == 1) if !missing(gender)
+
+bysort hhid wave: egen n_gender_obs = count(gender)
+bysort hhid wave: egen n_male = total(male)
+
+replace n_male = . if n_gender_obs == 0
+
+* Shares.
+gen elderly_share = n_elderly / hhsize ///
+    if !missing(n_elderly) & !missing(hhsize) & hhsize > 0
+
+gen male_share = n_male / hhsize ///
+    if !missing(n_male) & !missing(hhsize) & hhsize > 0
+
+
+*-------------------------------------------------------------------------------
+* 5.1 Log nutrition outcomes
+*-------------------------------------------------------------------------------
+
+capture drop lnd3kcal lnd3carbo lnd3fat lnd3protn
+
+gen lnd3kcal = ln(d3kcal) ///
+    if d3kcal > 0 & d3kcal < .
+
+gen lnd3carbo = ln(d3carbo) ///
+    if d3carbo > 0 & d3carbo < .
+
+gen lnd3fat = ln(d3fat) ///
+    if d3fat > 0 & d3fat < .
+
+gen lnd3protn = ln(d3protn) ///
+    if d3protn > 0 & d3protn < .
+
+
+*-------------------------------------------------------------------------------
+* 5.2 Household expenditure and income
+*
+* Preferred monetary variables:
+*   hhexpense_cpi = CHNS household expenditure inflated to common prices
+*   hhinc_cpi     = CHNS household income inflated to common prices
+*
+* We use the CHNS-provided CPI-adjusted variables rather than constructing
+* another deflator inside Paper 2.
+*
+* Household expenditure is non-negative, so ln(x+1) is appropriate.
+*
+* Household net income can be negative. Therefore:
+*   asinh_hhinc_cpi is the preferred transformation;
+*   lnHHINC_real is retained only for backward compatibility.
+*-------------------------------------------------------------------------------
+
+capture confirm variable hhexpense_cpi
+
+if _rc {
+    display as error ///
+        "hhexpense_cpi not found in original CHNS input data."
+    exit 111
 }
-gen ln_farmconsume = ln(1 + farmconsume)
+
+capture confirm variable hhinc_cpi
+
+if _rc {
+    display as error ///
+        "hhinc_cpi not found in original CHNS input data."
+    exit 111
+}
+
+
+capture drop ///
+    lnhhexpense_real ///
+    lnHHINC_real ///
+    asinh_hhinc_cpi ///
+    asinh_hhexpense_cpi
+
+
+* Household expenditure.
+gen double lnhhexpense_real = ///
+    ln(hhexpense_cpi + 1) ///
+    if hhexpense_cpi >= 0 ///
+    & hhexpense_cpi < .
+
+label variable lnhhexpense_real ///
+    "Log CHNS CPI-adjusted household expenditure (+1)"
+
+
+* Optional asinh version for robustness.
+gen double asinh_hhexpense_cpi = ///
+    asinh(hhexpense_cpi) ///
+    if !missing(hhexpense_cpi)
+
+label variable asinh_hhexpense_cpi ///
+    "Asinh CHNS CPI-adjusted household expenditure"
+
+
+* Preferred household-income transformation.
+gen double asinh_hhinc_cpi = ///
+    asinh(hhinc_cpi) ///
+    if !missing(hhinc_cpi)
+
+label variable asinh_hhinc_cpi ///
+    "Asinh CHNS CPI-adjusted net household income"
+
+
+* Backward-compatible log-income variable.
+* Negative income <= -1 cannot enter ln(x+1).
+gen double lnHHINC_real = ///
+    ln(hhinc_cpi + 1) ///
+    if hhinc_cpi > -1 ///
+    & hhinc_cpi < .
+
+label variable lnHHINC_real ///
+    "Log CHNS CPI-adjusted household income (+1)"
+
+
+* Diagnostics.
+display as text "------------------------------------------------------------"
+display as text "MONETARY OUTCOME DIAGNOSTICS"
+display as text "------------------------------------------------------------"
+
+summarize ///
+    hhexpense ///
+    hhexpense_cpi ///
+    hhinc_cpi ///
+    lnhhexpense_real ///
+    asinh_hhinc_cpi, ///
+    detail
+
+tab wave ///
+    if !missing(hhexpense_cpi)
+
+quietly count ///
+    if hhexpense_cpi == 0
+
+display as text ///
+    "Zero household-expenditure observations = " ///
+    r(N)
+
+quietly count ///
+    if hhinc_cpi < 0
+
+display as text ///
+    "Negative household-income observations = " ///
+    r(N)
 
 *===============================================================================
-* %% PART 1F — EVENT-TIME INDICATORS
-**# PART 1F — EVENT-TIME INDICATORS
+* 6. WAGES, BUSINESS INCOME, AND FARM CONSUMPTION
 *===============================================================================
 
-******analysis 
-***
-* Event time relative to 2004
+
+*-------------------------------------------------------------------------------
+* 6.1 Monthly wage
+*-------------------------------------------------------------------------------
+
+capture confirm variable C8
+
+if !_rc {
+
+    capture drop ///
+        monthly_wage ///
+        ln_monthly_wage ///
+        asinh_monthly_wage
+
+    gen double monthly_wage = C8
+
+    replace monthly_wage = . ///
+        if inlist( ///
+            monthly_wage, ///
+            -9, -99, -999, -9999 ///
+        )
+
+    replace monthly_wage = . ///
+        if monthly_wage < 0
+
+
+    gen double ln_monthly_wage = ///
+        ln(monthly_wage) ///
+        if monthly_wage > 0 ///
+        & monthly_wage < .
+
+
+    gen double asinh_monthly_wage = ///
+        asinh(monthly_wage) ///
+        if !missing(monthly_wage)
+
+
+    label variable monthly_wage ///
+        "Average monthly wage last year"
+
+    label variable ln_monthly_wage ///
+        "Log average monthly wage last year"
+
+    label variable asinh_monthly_wage ///
+        "Asinh average monthly wage last year"
+}
+
+
+*-------------------------------------------------------------------------------
+* 6.2 Individual business income
+*
+* IMPORTANT:
+* indbus is Individual Business Income, NOT a business-status dummy.
+* Net business income may be zero or negative, so asinh is preferred.
+*-------------------------------------------------------------------------------
+
+capture confirm variable indbus
+
+if !_rc {
+
+    capture drop asinh_indbus
+
+    replace indbus = . ///
+        if inlist( ///
+            indbus, ///
+            -9, -99, -999, -9999 ///
+        )
+
+    gen double asinh_indbus = ///
+        asinh(indbus) ///
+        if !missing(indbus)
+
+    label variable indbus ///
+        "Individual business income"
+
+    label variable asinh_indbus ///
+        "Asinh individual business income"
+}
+
+
+*-------------------------------------------------------------------------------
+* 6.3 Farm self-consumption
+*-------------------------------------------------------------------------------
+
+capture drop ln_farmconsume
+
+gen double ln_farmconsume = ///
+    ln(1 + farmconsume) ///
+    if farmconsume >= 0 ///
+    & farmconsume < .
+
+label variable ln_farmconsume ///
+    "Log farm self-consumption (+1)"
+
+*===============================================================================
+* 7. PANEL DECLARATION
+*===============================================================================
+
+xtset IDind wave
+xtdescribe
+
+
+*===============================================================================
+* 8. EVENT-TIME INDICATORS
+*===============================================================================
+
+capture drop ///
+    event_time evt_m7 evt_m4 evt_p0 evt_p2 evt_p5 evt_p7 evt_p11
+
+* Event time relative to 2004.
 gen event_time = wave - 2004
 
-* Only real event times in your data
-gen evt_m7 = (treated==1 & event_time==-7)   // 1997
-gen evt_m4 = (treated==1 & event_time==-4)   // 2000 (baseline)
-gen evt_p0 = (treated==1 & event_time==0)    // 2004 (transition)
-gen evt_p2 = (treated==1 & event_time==2)    // 2006
-gen evt_p5 = (treated==1 & event_time==5)    // 2009
-gen evt_p7 = (treated==1 & event_time==7)    // 2011
+* Treated-group event-time indicators.
+gen evt_m7 = (treated == 1 & event_time == -7)   // 1997
+gen evt_m4 = (treated == 1 & event_time == -4)   // 2000, reference
+gen evt_p0 = (treated == 1 & event_time ==  0)   // 2004
+gen evt_p2 = (treated == 1 & event_time ==  2)   // 2006
+gen evt_p5 = (treated == 1 & event_time ==  5)   // 2009
+gen evt_p7 = (treated == 1 & event_time ==  7)   // 2011
 
-* Normalize at 2000
+* Normalize at 2000.
 drop evt_m4
 
-* Optional correction for an additional observed survey wave, off by default.
+
+*-------------------------------------------------------------------------------
+* 8.1 Optional 2015 event-time indicator
+*-------------------------------------------------------------------------------
+
 if $P2_ES_ADD_2015 {
-    gen evt_p11 = (treated==1 & event_time==11)
-    global P2_ES_EXTRA "evt_p11"
-    global P2_ES_KCAL_EXTRA "evt_p11##i.lowS1_q25"
-    global P2_ES_INC_EXTRA "evt_p11##i.lowINC_q25"
-    global P2_ES_DDD_EXTRA "evt_p11##i.lowS1_q25##i.lowINC_q25"
-    global P2_ES_MED_EXTRA "evt_p11##i.lowS1"
+
+    gen evt_p11 = (treated == 1 & event_time == 11)
+
+    global P2_ES_EXTRA       "evt_p11"
+    global P2_ES_KCAL_EXTRA  "evt_p11##i.lowS1_q25"
+    global P2_ES_INC_EXTRA   "evt_p11##i.lowINC_q25"
+    global P2_ES_DDD_EXTRA   "evt_p11##i.lowS1_q25##i.lowINC_q25"
+    global P2_ES_MED_EXTRA   "evt_p11##i.lowS1"
     global P2_ES_ENTRY_EXTRA "evt_p11##i.ever_farmer"
 }
 else {
-    global P2_ES_EXTRA ""
-    global P2_ES_KCAL_EXTRA ""
-    global P2_ES_INC_EXTRA ""
-    global P2_ES_DDD_EXTRA ""
-    global P2_ES_MED_EXTRA ""
+
+    global P2_ES_EXTRA       ""
+    global P2_ES_KCAL_EXTRA  ""
+    global P2_ES_INC_EXTRA   ""
+    global P2_ES_DDD_EXTRA   ""
+    global P2_ES_MED_EXTRA   ""
     global P2_ES_ENTRY_EXTRA ""
 }
+
+
+*===============================================================================
+* END OF prep/01_data_prep.do
+*
+* RECOMMENDED ESTIMATION USAGE
+*
+* Main Paper 2 pure-consumer proxy:
+*   ... if consumer_base == 1, vce(cluster cluster_commid)
+*
+* Occupation-only benchmark:
+*   ... if consumer_base_occ == 1, vce(cluster cluster_commid)
+*
+* Strict robustness:
+*   ... if consumer_base_strict == 1, vce(cluster cluster_commid)
+*
+* IMPORTANT
+*   n_pre_core_info_waves and n_pre_strict_info_waves are diagnostics.
+*   Do not mechanically restrict the sample with them unless the CHNS skip
+*   patterns have been verified from the questionnaire/codebook.
+*===============================================================================

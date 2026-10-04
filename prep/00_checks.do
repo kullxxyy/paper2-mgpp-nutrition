@@ -4,6 +4,9 @@
 * Run through main.do, or load output/data/paper2_analysis_ready.dta first.
 * Locals used below belong to this file; no cross-file local macros are required.
 *===============================================================================
+display as error "RUNNING CURRENT 00_checks.do"
+display as error "P2_DATA_FILE = $P2_DATA_FILE"
+
 
 capture confirm file "$P2_DATA_FILE"
 if _rc {
